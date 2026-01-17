@@ -1,8 +1,7 @@
-streamlit
-pandas
-numpy
-plotly
-scikit-learn
-vaderSentiment
-wordcloud
-matplotlib
+streamlit>=1.30
+pandas>=1.5
+numpy>=1.23
+scikit-learn>=1.2
+vaderSentiment>=3.3.2
+wordcloud>=1.9
+matplotlib>=3.7
