@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
 import plotly.express as px
+import json
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -24,19 +24,14 @@ st.markdown(
 # ---------------- TITLE ----------------
 st.title("🌱 AI-Based Sustainability Dashboard")
 st.caption(
-    "Automatically analyzes **any CSV file** to detect sustainability trends, "
-    "resource stress, and regional patterns."
+    "Automatically analyzes ANY CSV file and visualizes "
+    "sustainability trends across Indian states."
 )
 
-# ---------------- MONTHS ----------------
+# ---------------- CONSTANTS ----------------
 MONTHS = [
     "January","February","March","April","May","June",
     "July","August","September","October","November","December"
-]
-
-STATES = [
-    "Tamil Nadu","Karnataka","Kerala","Maharashtra",
-    "Delhi","Telangana","Andhra Pradesh"
 ]
 
 RESOURCE_KEYWORDS = {
@@ -56,72 +51,74 @@ if not uploaded_file:
 df_raw = pd.read_csv(uploaded_file)
 
 # ---------------- COLUMN DETECTION ----------------
-columns = df_raw.columns.str.lower().tolist()
-
 def find_column(keywords):
     for col in df_raw.columns:
         if any(k in col.lower() for k in keywords):
             return col
     return None
 
-text_col = find_column(["feedback", "comment", "description", "issue", "text", "complaint"])
+text_col = find_column(["feedback", "comment", "description", "issue", "text"])
 state_col = find_column(["state", "location", "city", "region"])
 month_col = find_column(["month"])
 date_col = find_column(["date", "time"])
-value_col = find_column(["usage", "count", "value", "amount", "number"])
+value_col = find_column(["usage", "count", "value", "number"])
 
-# ---------------- NORMALIZATION ----------------
+# ---------------- NORMALIZE DATA ----------------
 df = pd.DataFrame()
 
-# TEXT
-if text_col:
-    df["Text"] = df_raw[text_col].astype(str)
-else:
-    df["Text"] = "No description provided"
+df["Text"] = (
+    df_raw[text_col].astype(str)
+    if text_col else "No description"
+)
 
-# STATE
-if state_col:
-    df["State"] = df_raw[state_col]
-else:
-    df["State"] = np.random.choice(STATES, len(df_raw))
+df["State"] = (
+    df_raw[state_col]
+    if state_col else np.random.choice(
+        ["Tamil Nadu","Karnataka","Kerala","Maharashtra","Delhi"],
+        len(df_raw)
+    )
+)
 
-# MONTH
 if month_col:
     df["Month"] = df_raw[month_col]
 elif date_col:
-    df["Month"] = pd.to_datetime(df_raw[date_col], errors="coerce").dt.month_name()
+    df["Month"] = pd.to_datetime(
+        df_raw[date_col], errors="coerce"
+    ).dt.month_name()
 else:
     df["Month"] = np.random.choice(MONTHS, len(df_raw))
 
-# USAGE
-if value_col:
-    df["Usage"] = pd.to_numeric(df_raw[value_col], errors="coerce").fillna(0)
-else:
-    df["Usage"] = np.random.randint(40, 90, len(df_raw))
+df["Usage"] = (
+    pd.to_numeric(df_raw[value_col], errors="coerce").fillna(0)
+    if value_col else np.random.randint(40, 90, len(df_raw))
+)
 
-# RESOURCE CLASSIFICATION (AI-style)
+# ---------------- RESOURCE CLASSIFICATION ----------------
 def classify_resource(text):
     text = text.lower()
-    scores = {r: sum(k in text for k in ks) for r, ks in RESOURCE_KEYWORDS.items()}
+    scores = {
+        r: sum(k in text for k in ks)
+        for r, ks in RESOURCE_KEYWORDS.items()
+    }
     return max(scores, key=scores.get)
 
 df["Resource"] = df["Text"].apply(classify_resource)
 
-# CLEAN MONTH ORDER
+# ---------------- MONTH ORDER ----------------
 df["Month"] = pd.Categorical(df["Month"], categories=MONTHS, ordered=True)
 df = df.sort_values("Month")
 
 # ---------------- SIDEBAR FILTERS ----------------
-st.sidebar.title("🔎 Filter Data")
+st.sidebar.title("🔎 Filters")
 
 selected_states = st.sidebar.multiselect(
-    "Select State(s)",
+    "State",
     sorted(df["State"].unique()),
     default=df["State"].unique()
 )
 
 selected_resources = st.sidebar.multiselect(
-    "Select Resource(s)",
+    "Resource",
     sorted(df["Resource"].unique()),
     default=df["Resource"].unique()
 )
@@ -132,7 +129,7 @@ filtered_df = df[
 ]
 
 # ---------------- TREND GRAPH ----------------
-st.subheader("📈 Resource Usage Trends (Auto-Analyzed)")
+st.subheader("📈 Resource Usage Trends")
 
 fig = px.line(
     filtered_df,
@@ -145,25 +142,29 @@ fig = px.line(
 )
 
 fig.update_layout(
-    xaxis_title="Month",
-    yaxis_title="Usage Level (AI-derived index)",
     hovermode="x unified",
-    height=520
+    height=520,
+    xaxis_title="Month",
+    yaxis_title="Usage Level"
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
 # ---------------- SPIKE ALERTS ----------------
 st.markdown("---")
-st.subheader("🚨 Anomaly Detection")
+st.subheader("🚨 Anomaly Alerts")
 
-for (state, resource), g in filtered_df.groupby(["State", "Resource"]):
+for (state, resource), g in filtered_df.groupby(["State","Resource"]):
     if g["Usage"].mean() > 0 and g["Usage"].max() > g["Usage"].mean() * 1.3:
-        st.error(f"⚠️ Spike detected in **{state} – {resource}**")
+        st.error(f"⚠️ Spike detected in {state} – {resource}")
+
+# ---------------- LOAD INDIA GEOJSON ----------------
+with open("india_states.geojson", "r", encoding="utf-8") as f:
+    india_geojson = json.load(f)
 
 # ---------------- HEATMAP ----------------
 st.markdown("---")
-st.subheader("🗺️ Regional Intensity Map")
+st.subheader("🗺️ India State-wise Sustainability Heatmap")
 
 heat_df = (
     df.groupby("State")["Usage"]
@@ -173,33 +174,34 @@ heat_df = (
 
 fig_map = px.choropleth(
     heat_df,
+    geojson=india_geojson,
+    featureidkey="properties.NAME_1",
     locations="State",
-    locationmode="india states",
     color="Avg Usage",
     color_continuous_scale="Reds",
     template="plotly_dark"
 )
 
 fig_map.update_geos(fitbounds="locations", visible=False)
+fig_map.update_layout(height=550)
+
 st.plotly_chart(fig_map, use_container_width=True)
 
-# ---------------- AI EXPLANATION ----------------
+# ---------------- AI INSIGHTS ----------------
 st.markdown("---")
-st.subheader("🧠 AI Explanation")
+st.subheader("🧠 AI Insights")
 
 top_state = heat_df.sort_values("Avg Usage", ascending=False).iloc[0]["State"]
 top_resource = df["Resource"].value_counts().idxmax()
 
 st.info(
     f"""
-**Automatic Insights Generated:**
+**Key Insights**
+• Most affected state: **{top_state}**
+• Most stressed resource: **{top_resource}**
 
-• Most affected state: **{top_state}**  
-• Most stressed resource: **{top_resource}**  
-• Detected seasonal and regional usage patterns  
-
-**Recommendation:**  
-Prioritize monitoring and infrastructure improvements in high-usage regions.
+**Recommendation**
+Prioritize monitoring and corrective actions in high-usage states.
 """
 )
 
