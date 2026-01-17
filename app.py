@@ -2,11 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.pipeline import Pipeline
-
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
@@ -19,8 +14,8 @@ st.set_page_config(
 
 st.title("🌱 AI-Based Sustainability Intelligence Assistant")
 st.markdown(
-    "A **context-aware, conversational AI system** for sustainability issue analysis, "
-    "trend comparison, forecasting, and escalation risk prediction."
+    "An **AI-inspired conversational system** for sustainability issue analysis, "
+    "trend comparison, forecasting, and escalation risk estimation."
 )
 
 # ---------------- SESSION MEMORY ----------------
@@ -40,49 +35,32 @@ months = [
     "July","August","September","October","November","December"
 ]
 
-# ---------------- ML CLASSIFIER ----------------
-def train_resource_classifier():
-    train_data = [
-        ("power cut issue", "Electricity"),
-        ("voltage fluctuation", "Electricity"),
-        ("no water supply", "Water"),
-        ("water leakage", "Water"),
-        ("garbage not collected", "Waste"),
-        ("plastic waste problem", "Waste"),
-        ("air pollution", "Pollution"),
-        ("vehicle smoke", "Pollution"),
-        ("noise pollution", "Pollution")
-    ]
-    X, y = zip(*train_data)
-    model = Pipeline([
-        ("tfidf", TfidfVectorizer()),
-        ("clf", LogisticRegression(max_iter=300))
-    ])
-    model.fit(X, y)
-    return model
+# ---------------- RULE-BASED ISSUE CLASSIFIER ----------------
+RESOURCE_KEYWORDS = {
+    "Water": ["water", "leak", "pipeline", "supply"],
+    "Electricity": ["power", "voltage", "current", "cut"],
+    "Waste": ["garbage", "waste", "plastic", "trash"],
+    "Pollution": ["pollution", "smoke", "noise", "air"]
+}
 
-ml_model = train_resource_classifier()
+def classify_resource(text):
+    text = text.lower()
+    scores = {}
+    for resource, words in RESOURCE_KEYWORDS.items():
+        scores[resource] = sum(w in text for w in words)
 
-def classify_with_confidence(text):
-    probs = ml_model.predict_proba([str(text)])[0]
-    classes = ml_model.classes_
-    idx = np.argmax(probs)
-    return classes[idx], round(probs[idx] * 100, 2)
+    resource = max(scores, key=scores.get)
+    confidence = scores[resource] * 25
+    return resource, min(confidence, 95)
 
-# ---------------- SIMPLE SENTIMENT (NO LIBRARY) ----------------
-negative_words = [
-    "bad","worst","problem","issue","no","not","dirty","polluted",
-    "leak","shortage","cut","smell","noise","complaint","delay"
-]
-
-positive_words = [
-    "good","clean","improved","better","nice","resolved","fixed"
-]
+# ---------------- SIMPLE SENTIMENT ----------------
+NEGATIVE = ["bad","problem","issue","no","not","dirty","polluted","leak","cut","delay"]
+POSITIVE = ["good","clean","better","fixed","improved"]
 
 def get_sentiment(text):
     t = text.lower()
-    neg = sum(word in t for word in negative_words)
-    pos = sum(word in t for word in positive_words)
+    neg = sum(w in t for w in NEGATIVE)
+    pos = sum(w in t for w in POSITIVE)
 
     if neg > pos:
         return "Negative"
@@ -106,7 +84,7 @@ else:
 
 # ---------------- DATA PROCESSING ----------------
 if not df.empty:
-    df["Resource"], df["Confidence"] = zip(*df["feedback"].apply(classify_with_confidence))
+    df["Resource"], df["Confidence"] = zip(*df["feedback"].apply(classify_resource))
     df["Sentiment"] = df["feedback"].apply(get_sentiment)
     df["Month"] = np.random.choice(months, size=len(df))
     df["Location"] = np.random.choice(
@@ -124,9 +102,9 @@ def ai_reply(text):
     t = text.lower()
 
     if not st.session_state.memory["location"] and not any(
-        city in t for city in ["bengaluru", "chennai", "hyderabad"]
+        c in t for c in ["bengaluru", "chennai", "hyderabad"]
     ):
-        return "📍 Please tell me your location (city)."
+        return "📍 Please specify your location (city)."
 
     if not st.session_state.memory["severity"] and not any(
         s in t for s in ["low", "medium", "high"]
@@ -163,31 +141,19 @@ for role, msg in st.session_state.chat[::-1]:
         if not st.session_state.memory["time"] and m in ["daily","weekly","recently"]:
             st.session_state.memory["time"] = msg
 
-# ---------------- FORECASTING ----------------
-month_index = {m:i for i,m in enumerate(months)}
-
-if not df.empty:
-    df["MonthIndex"] = df["Month"].map(month_index)
-
-monthly_counts = (
-    df.groupby(["Resource","MonthIndex"])
-    .size()
-    .reset_index(name="Count")
-)
-
+# ---------------- FORECASTING (RULE-BASED) ----------------
 def forecast_next_month(resource):
-    res = monthly_counts[monthly_counts["Resource"] == resource]
-    if len(res) < 3:
+    if df.empty:
         return None
-    model = LinearRegression()
-    model.fit(res[["MonthIndex"]], res["Count"])
-    next_m = res["MonthIndex"].max() + 1
-    return max(0, int(model.predict([[next_m]])[0]))
+    counts = df[df["Resource"] == resource].groupby("Month").size()
+    if len(counts) < 2:
+        return None
+    return int(counts.mean() * 1.1)
 
 # ---------------- FINAL ANALYSIS ----------------
 if all(st.session_state.memory.values()) and user_input:
 
-    resource, confidence = classify_with_confidence(user_input)
+    resource, confidence = classify_resource(user_input)
     sentiment = get_sentiment(user_input)
 
     st.markdown("### 🤖 Final AI Analysis")
@@ -211,38 +177,21 @@ if all(st.session_state.memory.values()) and user_input:
         )
     )
 
-    def escalation_risk(sentiment, trend, severity, confidence):
-        score = 0
-        if sentiment == "Negative":
-            score += 30
-        if trend > 0:
-            score += 25
-        score += severity * 10
-        score += confidence * 0.2
-        if score >= 70:
-            return "High", int(score)
-        elif score >= 40:
-            return "Medium", int(score)
-        return "Low", int(score)
+    score = (confidence * 0.4) + (st.session_state.memory["severity"] * 20)
+    risk = "High" if score > 70 else "Medium" if score > 40 else "Low"
 
-    risk, score = escalation_risk(
-        sentiment, cm - lm,
-        st.session_state.memory["severity"],
-        confidence
-    )
-
-    st.metric("🔮 Escalation Risk", risk, f"{score}/100")
+    st.metric("🔮 Escalation Risk", risk, f"{int(score)}/100")
 
     forecast = forecast_next_month(resource)
     if forecast:
-        st.info(f"📈 Predicted complaints next month: **{forecast}**")
+        st.info(f"📈 Estimated complaints next month: **{forecast}**")
 
     st.subheader("🧠 AI Explanation")
-    st.write(f"""
-This analysis shows **{resource}** related sustainability issues.
-Public sentiment is **{sentiment}**.
-Escalation risk is **{risk}**, based on trends, severity, and confidence.
-""")
+    st.write(
+        f"The system detected **{resource}** issues with **{sentiment}** sentiment. "
+        f"Risk level is **{risk}**, based on complaint patterns and severity. "
+        "Preventive action is recommended."
+    )
 
 # ---------------- WORD CLOUD ----------------
 if not df.empty:
