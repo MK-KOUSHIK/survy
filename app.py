@@ -1,160 +1,111 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
+import plotly.express as px
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
-    page_title="Sustainability Trend Analyzer",
+    page_title="AI Sustainability Dashboard",
     layout="wide",
     page_icon="🌱"
 )
 
-st.title("🌱 Sustainability Issue Trend Analyzer")
-st.write(
-    "A lightweight AI-inspired system for analyzing sustainability feedback, "
-    "tracking trends across **locations and months**, and generating alerts."
+# ---------------- DARK THEME ----------------
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #0e1117;
+        color: white;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-# ---------------- MONTHS ----------------
+# ---------------- TITLE ----------------
+st.title("🌱 AI-Based Sustainability Dashboard")
+st.caption(
+    "Analyzing large-scale sustainability feedback data to detect "
+    "resource usage trends across states and seasons."
+)
+
+# ---------------- SAMPLE DATA (REPLACE WITH CSV LATER IF NEEDED) ----------------
 months = [
     "January","February","March","April","May","June",
     "July","August","September","October","November","December"
 ]
 
-# ---------------- ISSUE CLASSIFICATION (KEYWORD AI) ----------------
-RESOURCE_KEYWORDS = {
-    "Water": ["water", "leak", "pipeline", "tap", "sewage"],
-    "Electricity": ["power", "electric", "voltage", "current", "cut"],
-    "Waste": ["garbage", "waste", "plastic", "trash", "dump"],
-    "Pollution": ["pollution", "smoke", "noise", "air", "burning"]
-}
+states = ["Tamil Nadu", "Karnataka", "Kerala"]
+resources = ["Electricity", "Water", "Waste"]
 
-def classify_issue(text):
-    text = text.lower()
-    scores = {k: sum(word in text for word in v)
-              for k, v in RESOURCE_KEYWORDS.items()}
-    issue = max(scores, key=scores.get)
-    confidence = min(95, scores[issue] * 25)
-    return issue, confidence
+data = []
+np.random.seed(42)
 
-# ---------------- SIMPLE SENTIMENT ----------------
-NEGATIVE_WORDS = ["bad", "problem", "issue", "dirty", "polluted", "leak", "cut", "delay"]
-POSITIVE_WORDS = ["good", "clean", "fixed", "improved", "resolved"]
+for state in states:
+    for resource in resources:
+        for month in months:
+            data.append({
+                "State": state,
+                "Resource": resource,
+                "Month": month,
+                "Usage": np.random.randint(40, 90)
+            })
 
-def get_sentiment(text):
-    t = text.lower()
-    neg = sum(w in t for w in NEGATIVE_WORDS)
-    pos = sum(w in t for w in POSITIVE_WORDS)
-    if neg > pos:
-        return "Negative"
-    elif pos > neg:
-        return "Positive"
-    return "Neutral"
+df = pd.DataFrame(data)
 
-# ---------------- CSV UPLOAD ----------------
-uploaded_file = st.file_uploader(
-    "📂 Upload Sustainability Feedback CSV (required column: feedback)",
-    type=["csv"]
+# ---------------- SIDEBAR FILTERS ----------------
+st.sidebar.title("🔎 Filter Data")
+
+selected_states = st.sidebar.multiselect(
+    "Select State(s)",
+    options=df["State"].unique(),
+    default=df["State"].unique()
 )
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+selected_resources = st.sidebar.multiselect(
+    "Select Resource(s)",
+    options=df["Resource"].unique(),
+    default=df["Resource"].unique()
+)
 
-    if "feedback" not in df.columns:
-        st.error("CSV must contain a column named `feedback`.")
-        st.stop()
+# ---------------- APPLY FILTERS ----------------
+filtered_df = df[
+    (df["State"].isin(selected_states)) &
+    (df["Resource"].isin(selected_resources))
+]
 
-    # AI-style analysis
-    df["Issue"], df["Confidence"] = zip(
-        *df["feedback"].apply(classify_issue)
-    )
-    df["Sentiment"] = df["feedback"].apply(get_sentiment)
+# Ensure correct month order
+filtered_df["Month"] = pd.Categorical(
+    filtered_df["Month"],
+    categories=months,
+    ordered=True
+)
+filtered_df = filtered_df.sort_values("Month")
 
-    # Demo metadata
-    df["Month"] = np.random.choice(months, len(df))
-    df["Location"] = np.random.choice(
-        ["Bengaluru", "Chennai", "Hyderabad", "Mumbai", "Delhi"],
-        len(df)
-    )
+# ---------------- MAIN GRAPH ----------------
+st.subheader("📈 Resource Usage Trends (Hover to Explore Details)")
 
-    # Severity score
-    df["Severity"] = df["Sentiment"].map({
-        "Negative": 3,
-        "Neutral": 2,
-        "Positive": 1
-    })
+fig = px.line(
+    filtered_df,
+    x="Month",
+    y="Usage",
+    color="Resource",
+    line_group="State",
+    markers=True,
+    template="plotly_dark"
+)
 
-else:
-    df = pd.DataFrame()
+fig.update_layout(
+    xaxis_title="Month",
+    yaxis_title="Usage Level (AI-derived index)",
+    legend_title="Resource Type",
+    hovermode="x unified",
+    height=550
+)
 
-# ---------------- TREND ANALYZER ----------------
-st.markdown("---")
-st.subheader("📊 Trend Analyzer (Month × Location)")
+st.plotly_chart(fig, use_container_width=True)
 
-if not df.empty:
-
-    chart_df = (
-        df.groupby(["Month", "Location"])
-        .size()
-        .reset_index(name="Feedback Count")
-    )
-
-    chart_df["Month"] = pd.Categorical(
-        chart_df["Month"], categories=months, ordered=True
-    )
-    chart_df = chart_df.sort_values("Month")
-
-    st.bar_chart(
-        chart_df,
-        x="Month",
-        y="Feedback Count",
-        color="Location"
-    )
-
-else:
-    st.info("⬆️ Upload a CSV file to view trends.")
-
-# ---------------- LOCATION ALERTS ----------------
-st.markdown("---")
-st.subheader("🚨 Location-wise Alerts")
-
-if not df.empty:
-    alerts = df.groupby("Location").size().reset_index(name="Issues")
-
-    for _, row in alerts.iterrows():
-        if row["Issues"] >= 4:
-            st.error(f"High number of issues reported in **{row['Location']}**")
-        else:
-            st.success(f"{row['Location']} is under normal range")
-
-# ---------------- INSIGHTS ----------------
-st.markdown("---")
-st.subheader("🧠 AI Insights")
-
-if not df.empty:
-    top_issue = df["Issue"].value_counts().idxmax()
-    top_location = df["Location"].value_counts().idxmax()
-
-    st.info(
-        f"Most reported issue: **{top_issue}**\n\n"
-        f"Most affected location: **{top_location}**\n\n"
-        "Recommended action: Prioritize inspections and preventive measures."
-    )
-
-# ---------------- CSV EXPORT ----------------
-st.markdown("---")
-st.subheader("📥 Download Analyzed Data")
-
-if not df.empty:
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "Download Analysis CSV",
-        csv,
-        file_name="sustainability_analysis.csv",
-        mime="text/csv"
-    )
-
-# ---------------- DATA PREVIEW ----------------
-with st.expander("📄 View Full Dataset"):
-    st.dataframe(df)
+# ---------------- DATA VIEW ----------------
+with st.expander("📊 View Processed Data"):
+    st.dataframe(filtered_df, use_container_width=True)
