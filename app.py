@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.pipeline import Pipeline
@@ -70,15 +69,25 @@ def classify_with_confidence(text):
     idx = np.argmax(probs)
     return classes[idx], round(probs[idx] * 100, 2)
 
-# ---------------- SENTIMENT ----------------
-analyzer = SentimentIntensityAnalyzer()
+# ---------------- SIMPLE SENTIMENT (NO LIBRARY) ----------------
+negative_words = [
+    "bad","worst","problem","issue","no","not","dirty","polluted",
+    "leak","shortage","cut","smell","noise","complaint","delay"
+]
+
+positive_words = [
+    "good","clean","improved","better","nice","resolved","fixed"
+]
 
 def get_sentiment(text):
-    score = analyzer.polarity_scores(str(text))["compound"]
-    if score > 0.05:
-        return "Positive"
-    elif score < -0.05:
+    t = text.lower()
+    neg = sum(word in t for word in negative_words)
+    pos = sum(word in t for word in positive_words)
+
+    if neg > pos:
         return "Negative"
+    elif pos > neg:
+        return "Positive"
     return "Neutral"
 
 # ---------------- DATASET UPLOAD ----------------
@@ -232,8 +241,7 @@ if all(st.session_state.memory.values()) and user_input:
     st.write(f"""
 This analysis shows **{resource}** related sustainability issues.
 Public sentiment is **{sentiment}**.
-Escalation risk is **{risk}**, based on complaint trends, severity, and confidence.
-Proactive intervention is recommended.
+Escalation risk is **{risk}**, based on trends, severity, and confidence.
 """)
 
 # ---------------- WORD CLOUD ----------------
