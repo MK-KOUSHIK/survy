@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from openai import OpenAI
+import time
+from openai import OpenAI, RateLimitError
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -27,7 +28,7 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 # ---------------- TITLE ----------------
 st.title("🌱 AI-Based Sustainability Dashboard")
 st.caption(
-    "Automatically analyzes ANY CSV file and generates "
+    "Automatically analyzes CSV data and generates "
     "AI-powered sustainability insights."
 )
 
@@ -87,9 +88,7 @@ df["State"] = (
 if month_col:
     df["Month"] = df_raw[month_col]
 elif date_col:
-    df["Month"] = pd.to_datetime(
-        df_raw[date_col], errors="coerce"
-    ).dt.month_name()
+    df["Month"] = pd.to_datetime(df_raw[date_col], errors="coerce").dt.month_name()
 else:
     df["Month"] = np.random.choice(MONTHS, len(df_raw))
 
@@ -109,7 +108,6 @@ def classify_resource(text):
 
 df["Resource"] = df["Text"].apply(classify_resource)
 
-# ---------------- MONTH ORDER ----------------
 df["Month"] = pd.Categorical(df["Month"], categories=MONTHS, ordered=True)
 df = df.sort_values("Month")
 
@@ -148,63 +146,64 @@ fig = px.line(
 
 fig.update_layout(
     hovermode="x unified",
-    height=520,
-    xaxis_title="Month",
-    yaxis_title="Usage Level"
+    height=520
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
-# ---------------- SPIKE ALERTS ----------------
-st.markdown("---")
-st.subheader("🚨 Anomaly Alerts")
-
-for (state, resource), g in filtered_df.groupby(["State","Resource"]):
-    if g["Usage"].mean() > 0 and g["Usage"].max() > g["Usage"].mean() * 1.3:
-        st.error(f"⚠️ Spike detected in {state} – {resource}")
-
-# ---------------- OPENAI INSIGHT FUNCTION ----------------
-def generate_ai_insight(df):
+# ---------------- AI FUNCTION (SAFE) ----------------
+@st.cache_data(show_spinner=False)
+def generate_ai_insight_safe(df):
     summary = (
-        df.groupby("State")["Usage"]
+        df.groupby(["State", "Resource"])["Usage"]
         .mean()
-        .sort_values(ascending=False)
-        .head(5)
+        .reset_index()
+        .sort_values("Usage", ascending=False)
+        .head(10)
     )
 
     prompt = f"""
 You are a sustainability policy analyst.
 
-Here is average sustainability stress by Indian states:
-{summary.to_string()}
+Here is summarized data (top 10 only):
+{summary.to_string(index=False)}
 
 Tasks:
-1. Identify key trends
-2. Highlight high-risk states
-3. Suggest government or NGO actions
-4. Keep explanation short and clear
+1. Identify patterns
+2. Mention high-risk states/resources
+3. Suggest 2–3 actions
+Limit response to 150 words.
 """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an expert sustainability analyst."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.4
-    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert sustainability analyst."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.4,
+            max_tokens=250
+        )
+        return response.choices[0].message.content
 
-    return response.choices[0].message.content
+    except RateLimitError:
+        return (
+            "⚠️ AI rate limit reached.\n\n"
+            "Please wait 1–2 minutes and try again."
+        )
 
-# ---------------- AI INSIGHTS ----------------
+# ---------------- AI OUTPUT ----------------
 st.markdown("---")
 st.subheader("🤖 AI-Generated Insights")
 
+st.caption("AI analysis is rate-limited and cached for stability.")
+
 if st.button("Generate AI Explanation"):
-    with st.spinner("Analyzing data with AI..."):
-        ai_text = generate_ai_insight(df)
+    with st.spinner("AI is analyzing data..."):
+        ai_text = generate_ai_insight_safe(df)
         st.success(ai_text)
 
 # ---------------- DATA VIEW ----------------
-with st.expander("📊 View Normalized Data"):
+with st.expander("📊 View Processed Data"):
     st.dataframe(df)
